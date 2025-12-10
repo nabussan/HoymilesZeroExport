@@ -34,7 +34,10 @@ import argparse
 import subprocess
 from config_provider import ConfigFileConfigProvider, MqttHandler, ConfigProviderChain
 import json
+from dotenv import load_dotenv
 
+
+load_dotenv()
 session = Session()
 logging.basicConfig(
     format='%(asctime)s %(levelname)-8s %(message)s',

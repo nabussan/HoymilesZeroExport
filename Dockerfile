@@ -16,6 +16,7 @@ RUN python3 -m venv /venv && \
 FROM build-${BASE} AS build-venv
 COPY requirements.txt /requirements.txt
 RUN /venv/bin/pip install --disable-pip-version-check -r /requirements.txt
+RUN pip install python-dotenv
 
 FROM base-${BASE}
 COPY --from=build-venv /venv /venv
