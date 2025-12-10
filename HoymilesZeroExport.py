@@ -46,6 +46,19 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-c', '--config', help='Override configuration file path')
 args = parser.parse_args()
 
+# Manuelle Ersetzungsfunktion für Platzhalter ${VARIABLE}
+def replace_placeholders(config):
+    for section in config.sections():
+        for option in config.options(section):
+            value = config.get(section, option)
+            if value.startswith('${') and value.endswith('}'):
+                env_var = value[2:-1]  # Entfernt ${ und }
+                replacement = os.getenv(env_var)
+                if replacement is not None:
+                    config.set(section, option, replacement)
+                else:
+                    raise ValueError(f"Umgebungsvariable '{env_var}' nicht gefunden oder leer in Sektion [{section}] Option {option}")
+
 try:
     config = ConfigParser()
 
@@ -54,6 +67,7 @@ try:
         config.read([baseconfig, args.config])
     else:
         config.read(baseconfig)
+        replace_placeholders(config)
 
     ENABLE_LOG_TO_FILE = config.getboolean('COMMON', 'ENABLE_LOG_TO_FILE')
     LOG_BACKUP_COUNT = config.getint('COMMON', 'LOG_BACKUP_COUNT')
@@ -87,6 +101,8 @@ try:
 except:
     logger.info('Error: your Python version is too old, this script requires version 3.8 or newer. Please update your Python.')
     sys.exit()
+
+
 
 def CastToInt(pValueToCast):
     try:
