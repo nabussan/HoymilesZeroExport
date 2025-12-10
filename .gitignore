@@ -1,1 +1,24 @@
+# Sensible Konfigurationsdateien
 HoymilesZeroExport_Config_Override.ini
+.env
+
+# Python-spezifische Dateien
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+
+# Log-Dateien und temporäre Ordner
+log/
+*.log
+
+# Docker-spezifische Dateien (falls relevant)
+docker-compose.override.yml
+*.env.local
+
+# Andere temporäre Dateien
+*.tmp
+*.bak
+*.swp
+.DS_Store  # Für macOS-Nutzer
+Thumbs.db  # Für Windows-Nutzer

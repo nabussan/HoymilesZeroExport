@@ -1,6 +1,6 @@
 #! /bin/sh
 
-# Script to read powermeter values from a DDSU666 Monophase
+# Script to read powermeter values from a DDSU666 Monophase 
 # Needs "mbpoll" (command line utility to communicate with ModBus slave) to be installed, e.g. "apt install mbpoll"
 # Usage: GetPowerFromDDSU666 <Device_Number>
 
