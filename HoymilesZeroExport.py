@@ -1,22 +1,17 @@
 # HoymilesZeroExport - https://github.com/reserve85/HoymilesZeroExport
 # Copyright (C) 2023, Tobias Kraft
-
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
-
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # GNU General Public License for more details.
-
 # You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
 __author__ = "Tobias Kraft"
-__version__ = "1.104"
-
+__version__ = "1.104 divide zero 01"
 import time
 from requests.sessions import Session
 from requests.auth import HTTPBasicAuth
@@ -30,13 +25,11 @@ from configparser import ConfigParser
 from pathlib import Path
 import sys
 from packaging import version
-import argparse 
+import argparse
 import subprocess
 from config_provider import ConfigFileConfigProvider, MqttHandler, ConfigProviderChain
 import json
 from dotenv import load_dotenv
-
-
 load_dotenv()
 session = Session()
 logging.basicConfig(
@@ -44,11 +37,9 @@ logging.basicConfig(
     level=logging.INFO,
     datefmt='%Y-%m-%d %H:%M:%S')
 logger = logging.getLogger()
-
 parser = argparse.ArgumentParser()
 parser.add_argument('-c', '--config', help='Override configuration file path')
 args = parser.parse_args()
-
 # Manuelle Ersetzungsfunktion für Platzhalter ${VARIABLE}
 def replace_placeholders(config):
     for section in config.sections():
@@ -61,17 +52,14 @@ def replace_placeholders(config):
                     config.set(section, option, replacement)
                 else:
                     raise ValueError(f"Umgebungsvariable '{env_var}' nicht gefunden oder leer in Sektion [{section}] Option {option}")
-
 try:
     config = ConfigParser()
-
     baseconfig = str(Path.joinpath(Path(__file__).parent.resolve(), "HoymilesZeroExport_Config.ini"))
     if args.config:
         config.read([baseconfig, args.config])
     else:
         config.read(baseconfig)
         replace_placeholders(config)
-
     ENABLE_LOG_TO_FILE = config.getboolean('COMMON', 'ENABLE_LOG_TO_FILE')
     LOG_BACKUP_COUNT = config.getint('COMMON', 'LOG_BACKUP_COUNT')
 except Exception as e:
@@ -81,22 +69,18 @@ except Exception as e:
         logger.error(e.message)
     else:
         logger.error(e)
-
 if ENABLE_LOG_TO_FILE:
     if not os.path.exists(Path.joinpath(Path(__file__).parent.resolve(), 'log')):
         os.makedirs(Path.joinpath(Path(__file__).parent.resolve(), 'log'))
-
     rotating_file_handler = TimedRotatingFileHandler(
         filename=Path.joinpath(Path.joinpath(Path(__file__).parent.resolve(), 'log'),'log'),
         when='midnight',
         interval=2,
         backupCount=LOG_BACKUP_COUNT)
-
     formatter = logging.Formatter(
         '%(asctime)s %(levelname)-8s %(message)s')
     rotating_file_handler.setFormatter(formatter)
     logger.addHandler(rotating_file_handler)
-
 logger.info('Log write to file: %s', ENABLE_LOG_TO_FILE)
 logger.info('Python Version: ' + sys.version)
 try:
@@ -104,9 +88,6 @@ try:
 except:
     logger.info('Error: your Python version is too old, this script requires version 3.8 or newer. Please update your Python.')
     sys.exit()
-
-
-
 def CastToInt(pValueToCast):
     try:
         result = int(pValueToCast)
@@ -132,105 +113,110 @@ def SetLimit(pLimit):
             return
         if (SetLimit.LastLimit == CastToInt(pLimit)) and not SetLimit.LastLimitAck:
             logger.info("Inverterlimit %s Watt was previously not accepted by at least one inverter, trying again...",CastToInt(pLimit))
-
         logger.info("setting new limit to %s Watt",CastToInt(pLimit))
         SetLimit.LastLimit = CastToInt(pLimit)
         SetLimit.LastLimitAck = True
-
-        min_watt_all_inverters = GetMinWattFromAllInverters()
-        if (CastToInt(pLimit) <= min_watt_all_inverters):
-            pLimit = min_watt_all_inverters # set only minWatt for every inv.
-            PublishGlobalState("limit", min_watt_all_inverters)
+        
+        # Nur erreichbare Inverter berücksichtigen
+        reachable_inverters = [i for i in range(INVERTER_COUNT) if AVAILABLE[i] and HOY_BATTERY_GOOD_VOLTAGE[i]]
+        if len(reachable_inverters) == 0:
+            logger.warning("No reachable inverters – skipping limit set")
+            return
+        
+        # Identifiziere nicht erreichbare Inverter
+        unreachable_inverters = [i for i in range(INVERTER_COUNT) if not (AVAILABLE[i] and HOY_BATTERY_GOOD_VOLTAGE[i])]
+        for i in unreachable_inverters:
+            logger.info(f"Inverter {i+1} ({NAME[i] if NAME[i] != 'yet unknown' else 'yet unknown'}) is not reachable and excluded from limit calculation")
+        
+        min_watt_reachable = sum(GetMinWatt(i) for i in reachable_inverters)
+        if CastToInt(pLimit) <= min_watt_reachable:
+            pLimit = min_watt_reachable
+            PublishGlobalState("limit", min_watt_reachable)
         else:
             PublishGlobalState("limit", CastToInt(pLimit))
-
-        RemainingLimit = CastToInt(pLimit)
-
-        RemainingLimit -= GetMinWattFromAllInverters()
-
-        # Handle non-battery inverters first
-        if RemainingLimit >= GetMaxWattFromAllNonBatteryInverters() - GetMinWattFromAllNonBatteryInverters():
-            nonBatteryInvertersLimit = GetMaxWattFromAllNonBatteryInverters() - GetMinWattFromAllNonBatteryInverters()
-        else:
-            nonBatteryInvertersLimit = RemainingLimit
-
-        for i in range(INVERTER_COUNT):
-            if not AVAILABLE[i] or HOY_BATTERY_MODE[i]:
-                continue
-
-            # Calculate proportional limit for non-battery inverters
-            NewLimit = CastToInt(nonBatteryInvertersLimit * (HOY_MAX_WATT[i] - GetMinWatt(i)) / (GetMaxWattFromAllNonBatteryInverters() - GetMinWattFromAllNonBatteryInverters()))
-
-            NewLimit += GetMinWatt(i)
-
-            # Apply the calculated limit to the inverter
-            NewLimit = ApplyLimitsToSetpointInverter(i, NewLimit)
-            if HOY_COMPENSATE_WATT_FACTOR[i] != 1:
-                logger.info('Ahoy: Inverter "%s": compensate Limit from %s Watt to %s Watt', NAME[i], CastToInt(NewLimit), CastToInt(NewLimit*HOY_COMPENSATE_WATT_FACTOR[i]))
-                NewLimit = CastToInt(NewLimit * HOY_COMPENSATE_WATT_FACTOR[i])
-                NewLimit = ApplyLimitsToMaxInverterLimits(i, NewLimit)
-
-            if (NewLimit == CastToInt(CURRENT_LIMIT[i])) and LASTLIMITACKNOWLEDGED[i]:
-                logger.info('Inverter "%s": Already at %s Watt',NAME[i],CastToInt(NewLimit))
-                continue
-
-            LASTLIMITACKNOWLEDGED[i] = True
-
-            PublishInverterState(i, "limit", NewLimit)
-            DTU.SetLimit(i, NewLimit)
-            if not DTU.WaitForAck(i, SET_LIMIT_TIMEOUT_SECONDS):
-                SetLimit.LastLimitAck = False
-                LASTLIMITACKNOWLEDGED[i] = False
-
-        # Adjust RemainingLimit based on what was assigned to non-battery inverters
-        RemainingLimit -= nonBatteryInvertersLimit
-
-        # Then handle battery inverters based on priority
-        for j in range(1, 6):
-            batteryMaxWattSamePrio = GetMaxWattFromAllBatteryInvertersSamePrio(j)
-            if batteryMaxWattSamePrio <= 0:
-                continue
-
-            if RemainingLimit >= batteryMaxWattSamePrio - GetMinWattFromAllBatteryInvertersWithSamePriority(j):
-                LimitPrio = batteryMaxWattSamePrio - GetMinWattFromAllBatteryInvertersWithSamePriority(j)
+        
+        RemainingLimit = CastToInt(pLimit) - min_watt_reachable
+        
+        # Non-Battery-Inverter (nur erreichbare)
+        non_battery_reachable = [i for i in reachable_inverters if not HOY_BATTERY_MODE[i]]
+        if len(non_battery_reachable) > 0:
+            max_non_battery = sum(HOY_MAX_WATT[i] for i in non_battery_reachable)
+            min_non_battery = sum(GetMinWatt(i) for i in non_battery_reachable)
+            if max_non_battery - min_non_battery == 0:
+                logger.warning("No adjustable non-battery inverters – skipping non-battery section")
+                nonBatteryInvertersLimit = 0
             else:
-                LimitPrio = RemainingLimit 
-
-            for i in range(INVERTER_COUNT):
-                if (not HOY_BATTERY_MODE[i]):
+                if RemainingLimit >= max_non_battery - min_non_battery:
+                    nonBatteryInvertersLimit = max_non_battery - min_non_battery
+                else:
+                    nonBatteryInvertersLimit = RemainingLimit
+                
+                for i in non_battery_reachable:
+                    NewLimit = CastToInt(nonBatteryInvertersLimit * (HOY_MAX_WATT[i] - GetMinWatt(i)) / (max_non_battery - min_non_battery)) + GetMinWatt(i)
+                    NewLimit = ApplyLimitsToSetpointInverter(i, NewLimit)
+                    if HOY_COMPENSATE_WATT_FACTOR[i] != 1:
+                        logger.info('OpenDTU: Inverter "%s": compensate Limit from %s Watt to %s Watt', NAME[i], CastToInt(NewLimit), CastToInt(NewLimit * HOY_COMPENSATE_WATT_FACTOR[i]))
+                        NewLimit = CastToInt(NewLimit * HOY_COMPENSATE_WATT_FACTOR[i])
+                        NewLimit = ApplyLimitsToMaxInverterLimits(i, NewLimit)
+                    
+                    if NewLimit == CastToInt(CURRENT_LIMIT[i]) and LASTLIMITACKNOWLEDGED[i]:
+                        logger.info('Inverter "%s": Already at %s Watt', NAME[i], CastToInt(NewLimit))
+                        continue
+                    
+                    LASTLIMITACKNOWLEDGED[i] = True
+                    PublishInverterState(i, "limit", NewLimit)
+                    DTU.SetLimit(i, NewLimit)
+                    if not DTU.WaitForAck(i, SET_LIMIT_TIMEOUT_SECONDS):
+                        SetLimit.LastLimitAck = False
+                        LASTLIMITACKNOWLEDGED[i] = False
+                
+                RemainingLimit -= nonBatteryInvertersLimit
+        
+        # Battery-Inverter nach Priorität (nur erreichbare)
+        battery_reachable = [i for i in reachable_inverters if HOY_BATTERY_MODE[i]]
+        for j in range(1, 6):
+            battery_same_prio = [i for i in battery_reachable if CONFIG_PROVIDER.get_battery_priority(i) == j]
+            if len(battery_same_prio) == 0:
+                continue
+            max_battery_prio = sum(HOY_MAX_WATT[i] for i in battery_same_prio)
+            min_battery_prio = sum(GetMinWatt(i) for i in battery_same_prio)
+            if max_battery_prio - min_battery_prio == 0:
+                logger.warning("No adjustable battery inverters with priority %s – skipping", j)
+                continue
+            if RemainingLimit >= max_battery_prio - min_battery_prio:
+                LimitPrio = max_battery_prio - min_battery_prio
+            else:
+                LimitPrio = RemainingLimit
+            
+            for i in battery_same_prio:
+                if not HOY_BATTERY_GOOD_VOLTAGE[i]:
                     continue
-                if (not AVAILABLE[i]) or (not HOY_BATTERY_GOOD_VOLTAGE[i]):
-                    continue
-                if CONFIG_PROVIDER.get_battery_priority(i) != j:
-                    continue
-
-                # Calculate proportional limit for battery inverters
-                NewLimit = CastToInt(LimitPrio * (HOY_MAX_WATT[i] - GetMinWatt(i)) / (GetMaxWattFromAllBatteryInvertersSamePrio(j) - GetMinWattFromAllBatteryInvertersWithSamePriority(j)))
-                NewLimit += GetMinWatt(i)
-
+                NewLimit = CastToInt(LimitPrio * (HOY_MAX_WATT[i] - GetMinWatt(i)) / (max_battery_prio - min_battery_prio)) + GetMinWatt(i)
                 NewLimit = ApplyLimitsToSetpointInverter(i, NewLimit)
                 if HOY_COMPENSATE_WATT_FACTOR[i] != 1:
-                    logger.info('Ahoy: Inverter "%s": compensate Limit from %s Watt to %s Watt', NAME[i], CastToInt(NewLimit), CastToInt(NewLimit*HOY_COMPENSATE_WATT_FACTOR[i]))
+                    logger.info('OpenDTU: Inverter "%s": compensate Limit from %s Watt to %s Watt', NAME[i], CastToInt(NewLimit), CastToInt(NewLimit * HOY_COMPENSATE_WATT_FACTOR[i]))
                     NewLimit = CastToInt(NewLimit * HOY_COMPENSATE_WATT_FACTOR[i])
                     NewLimit = ApplyLimitsToMaxInverterLimits(i, NewLimit)
-
-                if (NewLimit == CastToInt(CURRENT_LIMIT[i])) and LASTLIMITACKNOWLEDGED[i]:
-                    logger.info('Inverter "%s": Already at %s Watt',NAME[i],CastToInt(NewLimit))
+                
+                if NewLimit == CastToInt(CURRENT_LIMIT[i]) and LASTLIMITACKNOWLEDGED[i]:
+                    logger.info('Inverter "%s": Already at %s Watt', NAME[i], CastToInt(NewLimit))
                     continue
-
+                
                 LASTLIMITACKNOWLEDGED[i] = True
-
                 PublishInverterState(i, "limit", NewLimit)
                 DTU.SetLimit(i, NewLimit)
                 if not DTU.WaitForAck(i, SET_LIMIT_TIMEOUT_SECONDS):
                     SetLimit.LastLimitAck = False
                     LASTLIMITACKNOWLEDGED[i] = False
-
+            
             RemainingLimit -= LimitPrio
-    except:
-        logger.error("Exception at SetLimit")
+    
+    except Exception as e:
+        logger.error("Exception at SetLimit: %s", e)
         SetLimit.LastLimitAck = False
         raise
+
+
 
 def ResetInverterData(pInverterId):
     attributes_to_delete = [
@@ -1589,7 +1575,7 @@ except Exception as e:
     else:
         logger.error(e)
     time.sleep(LOOP_INTERVAL_IN_SECONDS)
-logger.info("---Start Zero Export---")
+logger.info("---Start Zero Export division/zero---")
 
 while True:
     CONFIG_PROVIDER.update()
